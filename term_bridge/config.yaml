@@ -1,0 +1,59 @@
+name: TERM Bridge
+slug: term_bridge
+version: "5.1.4"
+description: Connect HMPD thermostat controllers to Home Assistant through MQTT
+url: https://github.com/domin211/TERM-bridge
+arch:
+  - amd64
+  - aarch64
+
+startup: services
+boot: auto
+init: false
+uart: true
+apparmor: true
+
+map:
+  - type: homeassistant_config
+    path: /homeassistant
+  - type: addon_config
+    read_only: false
+    path: /config
+
+options:
+  debug: false
+  mqtt_host: core-mosquitto
+  mqtt_port: 1883
+  mqtt_username: ""
+  mqtt_password: ""
+  mqtt_tls: false
+  mqtt_tls_ca: ""
+  mqtt_tls_cert: ""
+  mqtt_tls_key: ""
+  hmpd_path: /app/hmpd
+  controllers:
+    - name: usb0
+      dev: /dev/ttyUSB0
+      baud: 4800
+      expected_regs: 64
+    - name: usb1
+      dev: /dev/ttyUSB1
+      baud: 4800
+      expected_regs: 39
+
+schema:
+  debug: bool
+  mqtt_host: str
+  mqtt_port: port
+  mqtt_username: str?
+  mqtt_password: password?
+  mqtt_tls: bool
+  mqtt_tls_ca: str?
+  mqtt_tls_cert: str?
+  mqtt_tls_key: str?
+  hmpd_path: str
+  controllers:
+    - name: str
+      dev: str
+      baud: int(1,)
+      expected_regs: int(1,)
