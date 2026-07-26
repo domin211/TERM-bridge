@@ -1,0 +1,32 @@
+#include <tunables/global>
+
+profile term_bridge flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  network inet stream,
+  network inet6 stream,
+  network unix stream,
+
+  signal (receive),
+  signal (send) set=(kill,term,int,hup,cont),
+
+  /bin/sh rix,
+  /usr/bin/python3 rix,
+  /opt/venv/bin/python3 rix,
+  /opt/venv/** r,
+  /app/run.sh rix,
+  /app/main.py r,
+  /app/hmpd rix,
+  /app/term_bridge/** r,
+
+  /data/ r,
+  /data/** rwk,
+  /config/ r,
+  /config/** rwk,
+  /tmp/ rw,
+  /tmp/** rwk,
+
+  /dev/ttyUSB[0-9]* rw,
+  /dev/ttyACM[0-9]* rw,
+  /dev/serial/** rw,
+}
