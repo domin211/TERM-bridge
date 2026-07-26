@@ -1,6 +1,8 @@
 import threading
 import time
 
+import pytest
+
 from hmpd_bridge.models import ControllerJob
 from hmpd_bridge.queue import ControllerQueue
 
@@ -52,11 +54,26 @@ def test_enqueue_raises_after_max_attempts():
     queue = make_queue(execute, max_attempts=2, retry_delays=(0.01,))
     queue.start()
     try:
-        try:
+        with pytest.raises(RuntimeError, match="boom"):
             queue.enqueue(ControllerJob(kind="regs"), wait=True)
-            raise AssertionError("expected RuntimeError")
-        except RuntimeError as exc:
-            assert "boom" in str(exc)
+    finally:
+        queue.stop(timeout=2)
+
+
+def test_retry_with_empty_delay_sequence_does_not_crash():
+    attempts = 0
+
+    def execute(job: ControllerJob) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("transient")
+
+    queue = make_queue(execute, max_attempts=2, retry_delays=())
+    queue.start()
+    try:
+        queue.enqueue(ControllerJob(kind="regs"), wait=True)
+        assert attempts == 2
     finally:
         queue.stop(timeout=2)
 
@@ -101,3 +118,77 @@ def test_command_gap_is_enforced_between_jobs():
         assert timestamps[1] - timestamps[0] >= 0.2
     finally:
         queue.stop(timeout=2)
+
+
+def test_stop_unblocks_waiting_pending_job():
+    active_started = threading.Event()
+    release_active = threading.Event()
+
+    def execute(job: ControllerJob) -> None:
+        active_started.set()
+        release_active.wait(timeout=2)
+
+    queue = make_queue(execute)
+    queue.start()
+    queue.enqueue(ControllerJob(kind="temps"), wait=False)
+    assert active_started.wait(timeout=2)
+
+    pending = ControllerJob(kind="regs")
+    waiter_error: list[BaseException] = []
+
+    def wait_for_pending() -> None:
+        try:
+            queue.enqueue(pending, wait=True)
+        except BaseException as exc:  # test captures the worker-facing failure
+            waiter_error.append(exc)
+
+    waiter = threading.Thread(target=wait_for_pending)
+    waiter.start()
+    time.sleep(0.05)
+    queue.stop(timeout=0.05)
+
+    waiter.join(timeout=1)
+    release_active.set()
+    queue.stop(timeout=2)
+
+    assert not waiter.is_alive()
+    assert waiter_error
+    assert "stopped before job execution" in str(waiter_error[0])
+
+
+def test_queue_can_be_started_again_after_clean_stop():
+    executions = 0
+
+    def execute(job: ControllerJob) -> None:
+        nonlocal executions
+        executions += 1
+
+    queue = make_queue(execute)
+    queue.start()
+    queue.enqueue(ControllerJob(kind="temps"), wait=True)
+    queue.stop(timeout=2)
+
+    with pytest.raises(RuntimeError, match="is stopped"):
+        queue.enqueue(ControllerJob(kind="temps"), wait=False)
+
+    queue.start()
+    try:
+        queue.enqueue(ControllerJob(kind="temps"), wait=True)
+    finally:
+        queue.stop(timeout=2)
+
+    assert executions == 2
+
+
+def test_invalid_queue_configuration_is_rejected():
+    with pytest.raises(ValueError, match="max_attempts"):
+        make_queue(lambda job: None, max_attempts=0)
+
+    with pytest.raises(ValueError, match="negative"):
+        ControllerQueue(
+            label="bad-gap",
+            execute=lambda job: None,
+            command_gap_seconds=-1,
+            max_attempts=1,
+            retry_delays=(),
+        )
